@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  listify:
+    build: .
+    container_name: listify
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NUXT_LISTIFY_DATA_DIR=/data
+    volumes:
+      - listify_data:/app/data/lists
+
+    networks:
+      - default
+
+networks:
+  default:
+    name: arr-network
+    external: true
+
+volumes:
+  listify_data:
