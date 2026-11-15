@@ -1,55 +1,66 @@
 # server/utils/
 ## Responsibility
-Single source of truth for the Listify list domain: Markdown wire-format parsing and generation, list/ID validation, and the filesystem repository that stores one `*.md` file per list. Contains no HTTP or framework code.
+Server-side domain layer, no HTTP code. Four modules:
+
+| Module | Role |
+| --- | --- |
+| `markdown.js` | Pure wire-format pair `parseMarkdown`/`generateMarkdown` + `validateId`. Markdown is the **import/export exchange format** (and the v1 migration source) — it is no longer the storage format. |
+| `db.js` | SQLite singleton (`node:sqlite` `DatabaseSync`): schema, PRAGMAs, markdown migration at first access, expired-session purge. |
+| `auth.js` | Accounts + sessions: scrypt password hashing, session create/read/destroy over the `listify_session` cookie, in-memory rate limit. |
+| `lists.js` | List repository over SQLite: create (upsert), read, transactional update, visit tracking, "my lists" query. |
+
 ## Design
-- **Parser/serializer pair**: `parseMarkdown(content)` and `generateMarkdown(list)` are exact inverses over one documented wire format; any format change must be applied to both (and to the duplicated `exportMd()` in `pages/list/[id].vue`).
-- **Canonical data model**: `{ title, uuid, sections: [{ name, items: [{ text, checked, qty, assign }] }] }`. `checked` is boolean; `qty` and `assign` are plain strings (empty string = absent), not numbers or arrays.
-- **Pure core, impure edges**: `parseMarkdown`, `generateMarkdown`, `validateId` are pure; only `readListFromDisk`, `writeListToDisk`, `getDataDir` touch `node:fs`/`node:path`.
-- **Filesystem-as-repository**: one file per aggregate, synchronous (`readFileSync`/`writeFileSync`), no index, no locking, no cache.
-- **Fail-soft reads, fail-loud writes**: invalid input or a missing file returns `null`; an invalid UUID on write throws.
+- **Storage is SQLite** (`<dataDir>/listify.db`), one `DatabaseSync` instance per Nitro process, opened lazily on first access. The canonical list model is unchanged: `{ title, uuid, sections: [{ name, items: [{ text, checked, qty, assign }] }] }`; list content is stored as a JSON `content` column (title duplicated in a column for sorting), not normalized.
+- **Data dir is live config**: `getDataDir()` in `db.js` reads `runtimeConfig.listify.dataDir` (env `NUXT_LISTIFY_DATA_DIR`), default `/app/data`. This used to be dead config in v1 — it is now the only place the path is resolved.
+- **Pure core, impure edges**: `markdown.js` is pure (no `node:fs`); all I/O lives in `db.js`/`lists.js`/`auth.js`.
+- **markdown.js is an exchange format**: `parseMarkdown`/`generateMarkdown` serve import/export and the one-shot v1→v2 migration; `exportMd()` in `pages/list/[id].vue` duplicates `generateMarkdown` client-side — any format change must touch both.
+- **Sessions**: cookie `listify_session` (32 random bytes hex), httpOnly, SameSite=Lax, 30-day expiry, **no `Secure` flag by design** (LAN HTTP access must keep login working). CSRF stance: SameSite=Lax + mutations only via POST/PATCH. Rate limiting is best-effort, in-memory, per IP+scope (resets on restart).
+- **Transactions**: mutations that read-then-write a list run inside `BEGIN IMMEDIATE…COMMIT` (rollback on error), which also serializes concurrent PATCHes (no lost updates within a transaction).
 
 ### Exports (exact signatures)
+
+`markdown.js` (pure):
 | Function | Signature | Role |
 | --- | --- | --- |
-| `parseMarkdown` | `parseMarkdown(content: string) → { title, uuid, sections }` | Line-oriented parse of stored Markdown into the canonical model. |
-| `generateMarkdown` | `generateMarkdown(list) → string` | Serialize the canonical model back to Markdown; returns text ending in exactly one `\n`. |
-| `validateId` | `validateId(id) → boolean` | Path-traversal guard: `true` only for `string` matching `/^[a-zA-Z0-9_-]+$/`; `false` for empty/non-string. |
-| `readListFromDisk` | `readListFromDisk(dataDir, id) → list \| null` | Validate ID, resolve `dataDir/<id>.md`, read UTF-8, return parsed list; `null` if ID invalid or file absent. |
-| `writeListToDisk` | `writeListToDisk(dataDir, list) → void` | `mkdirSync(dataDir, { recursive: true })` if needed, then overwrite `dataDir/<list.uuid>.md` with `generateMarkdown(list)`. |
-| `getDataDir` | `getDataDir() → string` | Returns the hardcoded storage path `/app/data/lists`. |
+| `parseMarkdown` | `parseMarkdown(content: string) → { title, uuid, sections }` | Parse stored/imported Markdown into the canonical model. |
+| `generateMarkdown` | `generateMarkdown(list) → string` | Serialize the canonical model back to Markdown (single trailing `\n`). |
+| `validateId` | `validateId(id) → boolean` | `true` only for `string` matching `/^[a-zA-Z0-9_-]+$/` — IDs are capability tokens, URL segments and (during migration) filenames. |
 
-### Markdown wire format (as implemented)
-```
-# Title
-UUID: <list-uuid>
+`db.js`:
+| Function | Signature | Role |
+| --- | --- | --- |
+| `getDataDir` | `getDataDir() → string` | `runtimeConfig.listify.dataDir` (env `NUXT_LISTIFY_DATA_DIR`), default `/app/data`. |
+| `getDb` | `getDb() → DatabaseSync` | Lazy singleton: mkdir dataDir, open `<dataDir>/listify.db`, schema + PRAGMAs, markdown migration, purge expired sessions. |
+| `getDatabasePath` | `getDatabasePath() → string \| null` | Path of the opened database (diagnostics). |
+| `closeDb` | `closeDb() → void` | Close and reset the singleton. |
 
-## Section Name
-- [ ] Text × Qty ← Pseudo
-- [x] Checked item ← Pseudo1 & Pseudo2
-```
-- **Title**: `/^#\s+(.+)/`, first-level heading; trailing-whitespace trimmed. Multiple matches overwrite, so the last `# ` line wins. `## ` does not match (requires whitespace after the single `#`).
-- **UUID**: `/^UUID:\s*(\S+)/`, first token after the colon; case-sensitive literal `UUID:`.
-- **Section heading**: `/^##\s+(.+)/`. Only `name` and `items` are supported — no per-section metadata.
-- **Item line**: `/^-\s+(\[.\])\s+(.+)/`. The state character is matched loosely (`[.]`), but `checked` is `true` only for the literal `[x]` — so `[X]` or `[-]` parse as unchecked and are normalized to `[ ]` on write.
-- **Suffix order is significant**: `← assignee` is stripped first (`/\s*←\s*(.+)/`, split at the first `←`), then `× qty` (`/\s*×\s*(.+)/`, split at the first `×`). Remaining trimmed text becomes `text`. There is no escaping; a literal `←` or `×` inside item text is consumed as a delimiter.
-- **Anonymous sections**: items appearing before any `##` heading go into a section with `name: ''`; a single such default section is reused (appended), so ordering relative to named sections is not preserved on round-trip.
-- **Generation**: `# title` and `UUID: uuid` emitted only when truthy, followed by a blank line; `## name` emitted only for non-empty names; each item emits `- [x]/[ ] text` then `` × qty `` / `` ← assign `` only when truthy. Sections are separated by blank lines, trailing blanks are collapsed, and the output ends with a single newline. Unrecognized Markdown (free prose, other headings that are not `# `/`## `) is silently dropped on round-trip.
+Schema: `users (id, email UNIQUE, password_hash, created_at)`, `sessions (token PK, user_id → users ON DELETE CASCADE, expires_at, created_at)`, `lists (id PK, owner_user_id → users ON DELETE SET NULL, title, content JSON, created_at, updated_at)`, `list_visits (user_id, list_id, last_visited, PK (user_id, list_id))` + indexes on `lists(owner_user_id)`, `sessions(user_id)`, `sessions(expires_at)`. PRAGMAs: `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`.
 
-### Persistence model
-- Directory: `/app/data/lists` — **hardcoded in `getDataDir()`**; `dataDir` is threaded into every read/write as a parameter.
-- Filename: `${uuid}.md`; the list UUID *is* the filename, so ID validation doubles as filename validation and blocks `/`, `..`, and dots entirely.
-- Writes are full-file overwrites of the regenerated Markdown (last-write-wins, no partial updates, no backups).
-- Known constraint: `runtimeConfig.listify.dataDir` (`nuxt.config.js`) and `NUXT_LISTIFY_DATA_DIR` (`docker-compose.yml`) are dead config — nothing reads them. Local dev without a writable `/app/data/lists` fails at `mkdirSync` (permission denied). `docker-compose.yml` mounts the `listify_data` volume at that exact path.
+`auth.js`:
+| Function | Signature | Role |
+| --- | --- | --- |
+| `hashPassword` / `verifyPassword` | `(password) → "scrypt:<salt-hex>:<hash-hex>"` / `(password, stored) → boolean` | scrypt (salt 16 B, hash 64 B) + `timingSafeEqual`. Zero npm deps. |
+| `normalizeEmail` / `isValidEmail` | `(email) → string` / `(email) → boolean` | Trim + lowercase; loose shape check `x@y.z`. |
+| `findUserByEmail` | `(email) → row \| undefined` | Lookup by normalized email. |
+| `createSession` / `getSessionUser` / `destroySession` | `(userId) → { token, expiresAt }` / `(event) → { id, email } \| null` / `(event) → void` | Session lifecycle; an expired session is deleted on sight. |
+| `setSessionCookie` / `clearSessionCookie` | `(event, ...) → void` | `listify_session` cookie handling. |
+| `rateLimit` | `(event, scope) → void` | In-memory per-IP window (20 / 15 min); throws 429 « Trop de tentatives… ». |
 
-### Validation & error behavior
-- `validateId`: returns `false` (never throws) for non-strings, empty strings, or anything outside `A-Za-z0-9_-`. Note the code comment mentions dots, but the regex rejects them.
-- `readListFromDisk`: never throws on bad input — invalid ID → `null`, missing file → `null`. Callers treat `null` (or a parsed list without `uuid`) as 404.
-- `writeListToDisk`: throws `Error('Invalid UUID: ' + list.uuid)` when `list.uuid` fails validation; filesystem errors (`EROFS`, `EACCES`) propagate to the handler.
-- `parseMarkdown` / `generateMarkdown`: total functions on their inputs; no validation of item text, quantity, or title.
+`lists.js`:
+| Function | Signature | Role |
+| --- | --- | --- |
+| `createList` | `(list, ownerUserId?) → list` | **Upsert**: in v1, importing a markdown whose UUID already existed overwrote the list — preserved (owner kept on conflict). |
+| `getList` | `(id) → list \| null` | `validateId` → `SELECT` → canonical model; `null` if invalid/absent (→ 404). |
+| `updateList` | `(id, mutate, visitorUserId?) → list \| null` | Read-mutate-write inside `BEGIN IMMEDIATE…COMMIT`; records the visit in the same transaction; `null` → 404. |
+| `touchVisit` | `(listId, userId) → void` | Upsert into `list_visits`. |
+| `listListsForUser` | `(userId) → [{ id, title, origin: 'created'\|'visited', lastVisited, updatedAt }]` | Lists owned + lists visited, ordered by last activity desc. |
+
 ## Flow
-Disk `*.md` → `readListFromDisk(dataDir, id)` → `validateId` → `readFileSync` → `parseMarkdown` → canonical list object → (caller mutates) → `writeListToDisk(dataDir, list)` → `validateId(list.uuid)` → `generateMarkdown` → `writeFileSync`.
-New list: caller builds `{ title, uuid, sections }` → `writeListToDisk` creates `dataDir` if missing and writes `dataDir/<uuid>.md`.
+- **Boot (first request)**: `getDb()` → mkdir dataDir → open SQLite → schema + PRAGMAs → **migration**: scan `*.md` in dataDir, `parseMarkdown`, `INSERT OR IGNORE` (idempotent; .md files never deleted, they remain the v1 backup; per-file try/catch, invalid id or unreadable file skipped with a log) → purge expired sessions.
+- **Read**: handler → `getList(id)` → canonical model. **Mutate**: handler → `updateList(id, mutate, userId?)` → transactional rewrite of `title`/`content`/`updated_at`.
+- **Login**: `verifyPassword` → `createSession` → `setSessionCookie`. **Request auth**: `getSessionUser(event)` joins sessions+users on the cookie token.
+
 ## Integration
-- **Consumers**: `server/api/lists/[id].get.js` (`getDataDir` + `readListFromDisk`), `[id].patch.js` (`readListFromDisk` → action dispatch on `toggle | assign | qty | text | add | delete` → `writeListToDisk`), `index.post.js` (`writeListToDisk` with a `uuid` package `v4()` ID), `import.post.js` (`parseMarkdown` + `validateId` to keep or regenerate the UUID, then `writeListToDisk`).
-- **Dependencies**: `node:fs` (`mkdirSync`, `existsSync`, `writeFileSync`, `readFileSync`), `node:path` (`join`). No `uuid` here — IDs are injected by the routes.
-- **Mirrored elsewhere**: `pages/list/[id].vue`'s `exportMd()` re-implements `generateMarkdown`; keep both in sync.
+- **Consumers**: all `server/api/**` handlers import these modules explicitly (`../../utils/db`, `../../utils/auth`, `../../utils/lists`, `../../utils/markdown`).
+- **Dependencies**: `node:sqlite` (Node ≥ 23.4 unflagged; Docker image runs `node:24-alpine`), `node:crypto`, `node:fs`, `node:path`.
+- **Mirrored elsewhere**: `exportMd()` in `pages/list/[id].vue` re-implements `generateMarkdown` — keep both in sync.
