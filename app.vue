@@ -1,8 +1,151 @@
 <template>
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
+  <div class="app-root">
+    <!-- Barre de compte globale, discrète, commune à toutes les pages -->
+    <div class="account-bar">
+      <template v-if="user">
+        <span class="account-email" :title="user.email">{{ user.email }}</span>
+        <button class="chip-btn" type="button" @click="handleLogout">Déconnexion</button>
+      </template>
+      <template v-else>
+        <button class="chip-btn" type="button" @click="openAuth('login')">Se connecter</button>
+        <button class="chip-btn" type="button" @click="openAuth('register')">S'inscrire</button>
+      </template>
+    </div>
+
+    <NuxtLayout>
+      <NuxtPage />
+    </NuxtLayout>
+
+    <!-- Dialog connexion / inscription -->
+    <dialog
+      ref="authDialog"
+      class="auth-dialog"
+      aria-labelledby="auth-title"
+      @close="resetAuthForm"
+    >
+      <div class="etal">
+        <div class="etal-head">
+          <span id="auth-title">{{ mode === 'login' ? 'Connexion' : 'Inscription' }}</span>
+          <button class="clear-btn" type="button" aria-label="Fermer" @click="closeAuth">
+            ✕
+          </button>
+        </div>
+        <form class="etal-body" @submit.prevent="submitAuth">
+          <div class="auth-toggle">
+            <button
+              type="button"
+              class="chip-btn"
+              :aria-pressed="mode === 'login'"
+              @click="switchMode('login')"
+            >
+              Connexion
+            </button>
+            <button
+              type="button"
+              class="chip-btn"
+              :aria-pressed="mode === 'register'"
+              @click="switchMode('register')"
+            >
+              Inscription
+            </button>
+          </div>
+          <div class="field">
+            <label for="auth-email">Email</label>
+            <input
+              id="auth-email"
+              v-model="email"
+              class="input"
+              type="email"
+              autocomplete="email"
+              required
+            />
+          </div>
+          <div class="field">
+            <label for="auth-password">Mot de passe</label>
+            <input
+              id="auth-password"
+              v-model="password"
+              class="input"
+              type="password"
+              :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+              required
+            />
+            <span v-if="mode === 'register'" class="hint">8 caractères minimum</span>
+          </div>
+          <p v-if="authError" class="error" role="alert">{{ authError }}</p>
+          <button class="btn" type="submit" :disabled="authLoading">
+            {{ authLoading ? 'Un instant…' : mode === 'login' ? 'Se connecter' : 'Créer mon compte' }}
+          </button>
+        </form>
+      </div>
+    </dialog>
+  </div>
 </template>
+
+<script setup>
+const { user, fetchMe, register, login, logout } = useAuth()
+
+const authDialog = ref(null)
+const mode = ref('login')
+const email = ref('')
+const password = ref('')
+const authError = ref('')
+const authLoading = ref(false)
+
+onMounted(() => {
+  fetchMe()
+})
+
+function resetAuthForm() {
+  email.value = ''
+  password.value = ''
+  authError.value = ''
+  authLoading.value = false
+}
+
+function openAuth(m) {
+  mode.value = m
+  resetAuthForm()
+  authDialog.value?.showModal()
+}
+
+function switchMode(m) {
+  mode.value = m
+  authError.value = ''
+}
+
+function closeAuth() {
+  authDialog.value?.close()
+}
+
+async function submitAuth() {
+  authLoading.value = true
+  authError.value = ''
+  try {
+    if (mode.value === 'login') {
+      await login(email.value, password.value)
+    } else {
+      await register(email.value, password.value)
+    }
+    closeAuth()
+  } catch (e) {
+    authError.value =
+      e?.data?.message ||
+      e?.message ||
+      (mode.value === 'login' ? 'Connexion impossible' : 'Inscription impossible')
+  } finally {
+    authLoading.value = false
+  }
+}
+
+async function handleLogout() {
+  try {
+    await logout()
+  } catch {
+    /* logout remet user à null de toute façon */
+  }
+}
+</script>
 
 <style>
 /* ==========================================================================
@@ -648,6 +791,61 @@ dialog::backdrop {
 }
 .pseudo-dialog p {
   color: var(--ink-soft);
+}
+
+/* ==========================================================================
+   Comptes utilisateurs (v2)
+   ========================================================================== */
+.app-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.4rem 0.9rem;
+  background: var(--papier);
+  border-bottom: 1px dashed var(--ink-faint);
+}
+
+.account-email {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-toggle {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.auth-toggle .chip-btn[aria-pressed='true'] {
+  background: var(--moutarde);
+}
+
+.auth-dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.auth-dialog .etal {
+  box-shadow: 7px 9px 0 rgba(22, 35, 61, 0.16);
+}
+.auth-dialog .etal-body {
+  gap: 0.9rem;
+}
+.auth-dialog .etal-head .clear-btn {
+  font-size: 1rem;
 }
 
 /* ==========================================================================

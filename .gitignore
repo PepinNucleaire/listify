@@ -10,6 +10,7 @@ output/
 
 # Local application data
 data/
+data-local/
 
 # Local tooling and secrets
 .opencode/
