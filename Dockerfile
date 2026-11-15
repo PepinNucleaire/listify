@@ -29,7 +29,7 @@ COPY --from=builder /app/package-lock.json ./
 RUN npm ci --omit=dev
 
 # Create data directory (for volume mount if needed)
-RUN mkdir -p /app/data/lists
+RUN mkdir -p /app/data
 
 EXPOSE 3000
 

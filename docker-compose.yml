@@ -9,9 +9,11 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - NUXT_LISTIFY_DATA_DIR=/data
+      - NUXT_LISTIFY_DATA_DIR=/app/data
     volumes:
-      - listify_data:/app/data/lists
+      # En v1, ce volume était monté sur /app/data/lists : les .md de prod sont
+      # donc à la racine du volume, là où la migration SQLite va les lire.
+      - listify_data:/app/data
 
     networks:
       - default
