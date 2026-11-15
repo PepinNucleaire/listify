@@ -25,3 +25,14 @@ Listify: Nuxt 4 (Vue 3) shopping-list app. Server routes and file-based Markdown
 - `data/lists/*.md` and `data/camping-liste.md` are sample lists; `.dockerignore` excludes `data`, so they are not baked into the image.
 - `.nuxt/` is a stale artifact referencing a different build path (`/home/opencode/workspace/listify`) and regenerates on dev/build. `output/` is generated and currently empty.
 - UI copy and error messages are in **French** — keep new user-facing strings French. Styling is a custom "Marché" design system: global tokens (`--encre`, `--papier`, `--tomate`, `--display`, `--body`, …) and reusable components (`.etal`, `.band`, `.item`, `.check`, `.qty`, `.stamp`, `.btn`) live in `app.vue`; pages use those classes plus scoped tweaks. Pico CSS was removed. Fonts (Bricolage Grotesque, Atkinson Hyperlegible) are self-hosted as woff2 in `public/fonts/`. No Tailwind/PostCSS build step.
+
+## Repository Map
+
+A full codemap is available at `codemap.md` in the project root.
+
+Before working on any task, read `codemap.md` to understand:
+- Project architecture and entry points
+- Directory responsibilities and design patterns
+- Data flow and integration points between modules
+
+For deep work on a specific folder, also read that folder's `codemap.md`.

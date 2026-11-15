@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "last_run": "2026-11-15T23:02:04.109Z",
+    "root": "/home/openchamber/workspaces/listify",
+    "include_patterns": [
+      "app.vue",
+      "nuxt.config.js",
+      "package.json",
+      "pages/**/*.vue",
+      "server/**/*.js"
+    ],
+    "exclude_patterns": [
+      "node_modules/**",
+      "output/**",
+      ".nuxt/**",
+      ".opencode/**",
+      "data/**",
+      "public/**"
+    ],
+    "exceptions": []
+  },
+  "file_hashes": {
+    "app.vue": "3dbb3bf78211f2fadc729947165a4bdf",
+    "nuxt.config.js": "029a5989420b88a322ba137f3d2b2f50",
+    "package.json": "cfdf7002b56129a5764625b6976271c5",
+    "pages/index.vue": "2a35865d8142ff52718631900601d805",
+    "pages/list/[id].vue": "948f3edc0cb56189e7ea320d31e4075d",
+    "server/api/lists/[id].get.js": "53232b7dfd7b24b8768b1eab6c33f108",
+    "server/api/lists/[id].patch.js": "c3744fa3e9be61692fbc75ca98c20110",
+    "server/api/lists/import.post.js": "c5dcf3912c6e16d681769ecd8fb20af8",
+    "server/api/lists/index.post.js": "b98b1a08db6f42be220e45f943906f3d",
+    "server/utils/markdown.js": "2fc7695e07fdce03230b5bd43f39efba"
+  },
+  "folder_hashes": {
+    ".": "c9310320a4311b811c1b22f33e46c210",
+    "pages": "b7403c61a78ab58f5c5745fcdfd7cbdc",
+    "pages/list": "d42522e55b08b9a21cb26f6bcb695724",
+    "server": "bcbb7573262b3941146afa426d9a1acf",
+    "server/api": "23447c6aa0b0f2a189703a7dd04649d8",
+    "server/api/lists": "23447c6aa0b0f2a189703a7dd04649d8",
+    "server/utils": "a92d511380b1c196ce0964c66c27568b"
+  }
+}
