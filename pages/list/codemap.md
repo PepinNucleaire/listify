@@ -25,7 +25,7 @@ Mutations — one helper, six actions:
 - `updateQty(si, ii, value)` → `PATCH { action:'qty', sectionIndex, itemIndex, value }`
 - `toggleAssign(si, ii)` → `PATCH { action:'assign', sectionIndex, itemIndex, value: pseudo }` (same action unassigns server-side)
 - `deleteItem(si, ii)` → `confirm()` then `PATCH { action:'delete', sectionIndex, itemIndex }`
-- `addItem()` → `PATCH { action:'add', sectionName, text, qty }`; `sectionName: ''` means default section. The Rayon field is a free-text input with a `<datalist>` of existing sections — typing a new name creates the section server-side on first item. `submitAddDialog()` reuses it, closing the dialog and refocusing the FAB only when `error` stayed empty.
+- `addItem()` → `PATCH { action:'add', sectionName, text, qty }`; `sectionName: ''` means default section. The Rayon field is a `<select>` (default + existing sections + sentinel `__nouvelle__` « Nouvelle catégorie… ») that reveals a required text input (`newSectionName`) for a new section name — the server creates the section on first item. `submitAddDialog()` reuses it, closing the dialog and refocusing the FAB only when `error` stayed empty.
 - `text` is a valid API action but not used here.
 - `renameItem` — the title pencil (`.rename-btn`) opens an inline edit form: Enter/« Enregistrer » → `PATCH { action:'rename', value }` (server trims, no-ops on empty, clamps to 200); Échap/« Annuler » or unchanged title → no request; blur saves only if changed.
 

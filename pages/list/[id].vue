@@ -139,17 +139,21 @@
           <form class="etal-body" @submit.prevent="addItem">
             <div class="field">
               <label for="add-section">Rayon</label>
+              <select id="add-section" v-model="newItemSection">
+                <option value="">— Rayon par défaut —</option>
+                <option v-for="name in namedSections" :key="name" :value="name">{{ name }}</option>
+                <option value="__nouvelle__">Nouvelle catégorie…</option>
+              </select>
               <input
-                id="add-section"
-                v-model="newItemSection"
-                class="input"
+                v-if="newItemSection === NEW_SECTION"
+                ref="newSectionNameInline"
+                v-model="newSectionName"
+                class="input new-section-name"
                 type="text"
-                placeholder="Rayon (défaut si vide)"
-                list="add-section-suggestions"
+                placeholder="Nom du nouveau rayon"
+                required
+                aria-label="Nom du nouveau rayon"
               />
-              <datalist v-if="namedSections.length" id="add-section-suggestions">
-                <option v-for="name in namedSections" :key="name" :value="name"></option>
-              </datalist>
             </div>
             <div class="add-grid">
               <input v-model="newItemText" class="input" type="text" placeholder="Article" required />
@@ -222,17 +226,21 @@
       <form class="etal-body add-dialog-body" @submit.prevent="submitAddDialog">
         <div class="field">
           <label for="add-section-popup">Rayon</label>
+          <select id="add-section-popup" v-model="newItemSection">
+            <option value="">— Rayon par défaut —</option>
+            <option v-for="name in namedSections" :key="name" :value="name">{{ name }}</option>
+            <option value="__nouvelle__">Nouvelle catégorie…</option>
+          </select>
           <input
-            id="add-section-popup"
-            v-model="newItemSection"
-            class="input"
+            v-if="newItemSection === NEW_SECTION"
+            ref="newSectionNamePopup"
+            v-model="newSectionName"
+            class="input new-section-name"
             type="text"
-            placeholder="Rayon (défaut si vide)"
-            list="add-section-suggestions-popup"
+            placeholder="Nom du nouveau rayon"
+            required
+            aria-label="Nom du nouveau rayon"
           />
-          <datalist v-if="namedSections.length" id="add-section-suggestions-popup">
-            <option v-for="name in namedSections" :key="name" :value="name"></option>
-          </datalist>
         </div>
         <div class="add-grid">
           <input
@@ -424,6 +432,23 @@ async function submitRename() {
   titleInput.value = ''
 }
 
+// Rayon « Nouvelle catégorie… » : sentinelle du select → saisie libre du nom.
+// Les deux formulaires (inline + popup) partagent newItemSection (le select) et
+// newSectionName (le champ texte) : l'état « nouvelle catégorie » est commun.
+const NEW_SECTION = '__nouvelle__'
+const newSectionName = ref('')
+const newSectionNameInline = ref(null)
+const newSectionNamePopup = ref(null)
+
+// Apparition du champ nom → focus auto (celui du formulaire visible : popup si ouverte)
+watch(newItemSection, (v) => {
+  if (v !== NEW_SECTION) return
+  nextTick(() => {
+    const el = addOpen.value ? newSectionNamePopup.value : newSectionNameInline.value
+    el?.focus()
+  })
+})
+
 async function toggleItem(si, ii) {
   await patchList({ action: 'toggle', sectionIndex: si, itemIndex: ii })
 }
@@ -455,14 +480,22 @@ async function deleteItem(si, ii) {
 
 async function addItem() {
   if (!newItemText.value.trim()) return
+  const sectionName =
+    newItemSection.value === NEW_SECTION ? newSectionName.value.trim() : newItemSection.value
   await patchList({
     action: 'add',
-    sectionName: newItemSection.value,
+    sectionName,
     text: newItemText.value.trim(),
     qty: newItemQty.value.trim()
   })
   newItemText.value = ''
   newItemQty.value = ''
+  // Sentinelle « Nouvelle catégorie… » : reset du select et du nom saisi, sinon
+  // l'état « nouvelle catégorie » resterait collé à l'ajout suivant
+  if (newItemSection.value === NEW_SECTION) {
+    newItemSection.value = ''
+    newSectionName.value = ''
+  }
 }
 
 // Soumission depuis la popup : mêmes refs, fermeture + focus retour au « + » si l'ajout passe
@@ -697,5 +730,13 @@ function exportMd() {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Saisie du nom d'un nouveau rayon : léger retrait sous le select « Rayon »,
+   aligné sur le champ (tokens/classes Marché, rien de plus) */
+.new-section-name {
+  margin-top: 0.4rem;
+  margin-left: 0.85rem;
+  width: calc(100% - 0.85rem);
 }
 </style>
