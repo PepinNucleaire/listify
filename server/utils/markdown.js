@@ -1,6 +1,3 @@
-import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 /**
  * Parse markdown list content into structured data.
  *
@@ -126,43 +123,11 @@ export function generateMarkdown(list) {
 }
 
 /**
- * Validate that the ID is safe (no path traversal).
+ * Validate a list ID. Kept strict: IDs are capability tokens used in URLs and
+ * as database keys, and must stay filename-safe for the markdown migration.
  */
 export function validateId(id) {
   if (!id || typeof id !== 'string') return false
-  // Only allow UUID-like strings: alphanumeric, hyphens, underscores, dots
+  // Only allow UUID-like strings: alphanumeric, hyphens, underscores
   return /^[a-zA-Z0-9_-]+$/.test(id)
-}
-
-/**
- * Read a list from disk.
- * Returns null if ID is invalid or file doesn't exist.
- */
-export function readListFromDisk(dataDir, id) {
-  if (!validateId(id)) return null
-  const filePath = join(dataDir, `${id}.md`)
-  if (!existsSync(filePath)) return null
-  const content = readFileSync(filePath, 'utf-8')
-  return parseMarkdown(content)
-}
-
-/**
- * Write a list to disk.
- */
-export function writeListToDisk(dataDir, list) {
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true })
-  }
-  if (!validateId(list.uuid)) {
-    throw new Error('Invalid UUID: ' + list.uuid)
-  }
-  const filePath = join(dataDir, `${list.uuid}.md`)
-  writeFileSync(filePath, generateMarkdown(list), 'utf-8')
-}
-
-/**
- * Get the data directory.
- */
-export function getDataDir() {
-  return '/app/data/lists'
 }

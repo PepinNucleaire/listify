@@ -6,6 +6,16 @@
       <header class="list-head">
         <div class="list-title">
           <h1>{{ list?.title || 'Liste' }}</h1>
+          <button
+            v-if="list && !editingTitle"
+            class="chip-btn rename-btn"
+            type="button"
+            aria-label="Renommer la liste"
+            title="Renommer"
+            @click="startRename"
+          >
+            ✎
+          </button>
           <div
             v-if="list && totalCount"
             class="progress"
@@ -15,6 +25,34 @@
             <span class="bar"><i :style="{ width: percent + '%' }"></i></span>
             <span>{{ doneCount }} pris sur {{ totalCount }}</span>
           </div>
+
+          <!-- Édition inline du titre (renommage) : remplace le <h1> pendant l'édition -->
+          <form v-if="editingTitle" class="title-edit" @submit.prevent="submitRename">
+            <label class="sr-only" for="rename-title">Nouveau titre de la liste</label>
+            <input
+              id="rename-title"
+              ref="titleEditInput"
+              v-model="titleInput"
+              class="input title-input"
+              type="text"
+              maxlength="200"
+              :disabled="renaming"
+              @blur="onTitleBlur"
+              @keydown.esc.prevent="cancelRename"
+            />
+            <button class="btn" type="submit" :disabled="renaming" @mousedown.prevent>
+              {{ renaming ? 'Enregistrement…' : 'Enregistrer' }}
+            </button>
+            <button
+              class="chip-btn"
+              type="button"
+              :disabled="renaming"
+              @mousedown.prevent
+              @click="cancelRename"
+            >
+              Annuler
+            </button>
+          </form>
         </div>
 
         <div class="list-actions">
@@ -104,7 +142,18 @@
               <select id="add-section" v-model="newItemSection">
                 <option value="">— Rayon par défaut —</option>
                 <option v-for="name in namedSections" :key="name" :value="name">{{ name }}</option>
+                <option value="__nouvelle__">Nouvelle catégorie…</option>
               </select>
+              <input
+                v-if="newItemSection === NEW_SECTION"
+                ref="newSectionNameInline"
+                v-model="newSectionName"
+                class="input new-section-name"
+                type="text"
+                placeholder="Nom du nouveau rayon"
+                required
+                aria-label="Nom du nouveau rayon"
+              />
             </div>
             <div class="add-grid">
               <input v-model="newItemText" class="input" type="text" placeholder="Article" required />
@@ -180,13 +229,25 @@
           <select id="add-section-popup" v-model="newItemSection">
             <option value="">— Rayon par défaut —</option>
             <option v-for="name in namedSections" :key="name" :value="name">{{ name }}</option>
+            <option value="__nouvelle__">Nouvelle catégorie…</option>
           </select>
+          <input
+            v-if="newItemSection === NEW_SECTION"
+            ref="newSectionNamePopup"
+            v-model="newSectionName"
+            class="input new-section-name"
+            type="text"
+            placeholder="Nom du nouveau rayon"
+            required
+            aria-label="Nom du nouveau rayon"
+          />
         </div>
         <div class="add-grid">
           <input
             v-model="newItemText"
             class="input"
             type="text"
+            id="add-item-popup"
             placeholder="Article"
             aria-label="Article"
             required
@@ -275,7 +336,7 @@ function openAddDialog() {
   addDialogError.value = ''
   addOpen.value = true
   addDialog.value?.showModal()
-  addDialog.value?.querySelector('input')?.focus()
+  addDialog.value?.querySelector('#add-item-popup')?.focus()
 }
 
 function closeAddDialog() {
@@ -326,6 +387,68 @@ async function patchList(body) {
   }
 }
 
+// Renommage du titre : édition inline. Entrée/« Enregistrer » → PATCH `rename` ;
+// Échap/« Annuler » → abandon ; blur → enregistre seulement si le titre a changé.
+// Vide ou inchangé après trim → pas de requête. Le titre affiché vient de
+// patchList (server-authoritative) : aucune mutation locale de list.value.
+const editingTitle = ref(false)
+const renaming = ref(false)
+const titleInput = ref('')
+const titleEditInput = ref(null)
+
+function startRename() {
+  titleInput.value = list.value?.title || ''
+  editingTitle.value = true
+  nextTick(() => titleEditInput.value?.focus())
+}
+
+function cancelRename() {
+  if (renaming.value) return
+  editingTitle.value = false
+  titleInput.value = ''
+}
+
+function onTitleBlur() {
+  if (!editingTitle.value || renaming.value) return
+  submitRename()
+}
+
+async function submitRename() {
+  if (!editingTitle.value || renaming.value) return
+  const next = titleInput.value.trim()
+  const current = (list.value?.title || '').trim()
+  if (!next || next === current) {
+    editingTitle.value = false
+    titleInput.value = ''
+    return
+  }
+  renaming.value = true
+  error.value = ''
+  await patchList({ action: 'rename', value: next })
+  // patchList n'écrit dans `error` que si le PATCH a échoué → on précise le contexte
+  if (error.value) error.value = 'Erreur lors du renommage'
+  renaming.value = false
+  editingTitle.value = false
+  titleInput.value = ''
+}
+
+// Rayon « Nouvelle catégorie… » : sentinelle du select → saisie libre du nom.
+// Les deux formulaires (inline + popup) partagent newItemSection (le select) et
+// newSectionName (le champ texte) : l'état « nouvelle catégorie » est commun.
+const NEW_SECTION = '__nouvelle__'
+const newSectionName = ref('')
+const newSectionNameInline = ref(null)
+const newSectionNamePopup = ref(null)
+
+// Apparition du champ nom → focus auto (celui du formulaire visible : popup si ouverte)
+watch(newItemSection, (v) => {
+  if (v !== NEW_SECTION) return
+  nextTick(() => {
+    const el = addOpen.value ? newSectionNamePopup.value : newSectionNameInline.value
+    el?.focus()
+  })
+})
+
 async function toggleItem(si, ii) {
   await patchList({ action: 'toggle', sectionIndex: si, itemIndex: ii })
 }
@@ -357,14 +480,22 @@ async function deleteItem(si, ii) {
 
 async function addItem() {
   if (!newItemText.value.trim()) return
+  const sectionName =
+    newItemSection.value === NEW_SECTION ? newSectionName.value.trim() : newItemSection.value
   await patchList({
     action: 'add',
-    sectionName: newItemSection.value,
+    sectionName,
     text: newItemText.value.trim(),
     qty: newItemQty.value.trim()
   })
   newItemText.value = ''
   newItemQty.value = ''
+  // Sentinelle « Nouvelle catégorie… » : reset du select et du nom saisi, sinon
+  // l'état « nouvelle catégorie » resterait collé à l'ajout suivant
+  if (newItemSection.value === NEW_SECTION) {
+    newItemSection.value = ''
+    newSectionName.value = ''
+  }
 }
 
 // Soumission depuis la popup : mêmes refs, fermeture + focus retour au « + » si l'ajout passe
@@ -542,5 +673,70 @@ function exportMd() {
   from {
     transform: translateY(100%);
   }
+}
+
+/* ==========================================================================
+   Renommage du titre — crayon + édition inline
+   ========================================================================== */
+.rename-btn {
+  /* Le crayon reste collé au <h1> : l'espace libre du flex est absorbé ici
+     (au lieu du `space-between`), la barre de progression reste à droite */
+  margin-left: 0.35rem;
+  margin-right: auto;
+  align-self: center;
+  padding: 0.4rem 0.7rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem; /* zone de tactile ≥ 40px */
+  line-height: 1;
+  font-size: 1rem;
+}
+.rename-btn:focus-visible {
+  outline: 3px solid var(--encre);
+  outline-offset: 2px;
+}
+
+/* Édition : input harmonisé avec le <h1> (police display, encre, gabarit proche) */
+.title-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.title-input {
+  flex: 1 1 10rem;
+  min-width: 0;
+  width: auto;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(1.15rem, 5vw, 1.6rem);
+  letter-spacing: -0.02em;
+  color: var(--encre);
+  padding: 0.25rem 0.55rem;
+}
+.title-edit .btn,
+.title-edit .chip-btn {
+  flex: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Saisie du nom d'un nouveau rayon : léger retrait sous le select « Rayon »,
+   aligné sur le champ (tokens/classes Marché, rien de plus) */
+.new-section-name {
+  margin-top: 0.4rem;
+  margin-left: 0.85rem;
+  width: calc(100% - 0.85rem);
 }
 </style>

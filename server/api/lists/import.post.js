@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
-import { parseMarkdown, writeListToDisk, getDataDir, validateId } from '../../utils/markdown'
+import { createList } from '../../utils/lists'
+import { getSessionUser } from '../../utils/auth'
+import { parseMarkdown, validateId } from '../../utils/markdown'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
@@ -8,8 +10,6 @@ export default defineEventHandler(async (event) => {
   if (!content) {
     throw createError({ statusCode: 400, message: 'Contenu markdown requis' })
   }
-
-  const dataDir = getDataDir()
 
   const parsed = parseMarkdown(content)
 
@@ -21,7 +21,8 @@ export default defineEventHandler(async (event) => {
     parsed.title = 'Liste importée'
   }
 
-  writeListToDisk(dataDir, parsed)
+  const user = getSessionUser(event)
+  createList(parsed, user?.id ?? null)
 
   return { id, url: `/list/${id}` }
 })
