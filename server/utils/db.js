@@ -30,6 +30,7 @@ function initSchema(database) {
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      pseudo TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
 
@@ -60,6 +61,12 @@ function initSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
   `)
+
+  // Migration de schéma : bases créées avant l'ajout de `users.pseudo`.
+  const cols = database.prepare('PRAGMA table_info(users)').all()
+  if (!cols.some(c => c.name === 'pseudo')) {
+    database.exec("ALTER TABLE users ADD COLUMN pseudo TEXT NOT NULL DEFAULT ''")
+  }
 }
 
 /**

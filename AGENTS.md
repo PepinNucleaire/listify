@@ -42,3 +42,10 @@ Before working on any task, read `codemap.md` to understand:
 - Data flow and integration points between modules
 
 For deep work on a specific folder, also read that folder's `codemap.md`.
+
+## v2.2 — comptes enrichis et gestion des listes
+
+- **Session au SSR** : `plugins/auth.server.js` hydrate `useState('listify-user')` depuis le cookie au premier rendu — plus de flash anonyme. `server/utils/auth.js` importe explicitement `getCookie`/`setCookie`/… de `h3` (les auto-imports ne sont pas disponibles dans un plugin).
+- **Pseudo lié au compte** : colonne `users.pseudo` (migration ALTER idempotente dans `db.js`), `POST /api/auth/pseudo`. Connecté → pseudo serveur ; anonyme → localStorage (inchangé).
+- **Renommage de rayon** : action PATCH `renameSection` (`sectionIndex`, `value` ; trim, no-op si vide, ≤ 100 car.). Le rayon par défaut (nom vide) n'est pas renommable.
+- **Suppression de liste** : `DELETE /api/lists/:id` — 401 sans session, 403 si propriétaire différent, 200 sinon. Une liste anonyme est supprimable par tout utilisateur connecté (l'URL reste la capacité).

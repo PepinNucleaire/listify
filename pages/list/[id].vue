@@ -58,6 +58,18 @@
         <div class="list-actions">
           <button class="chip-btn" type="button" @click="copyLink">Copier le lien</button>
           <button class="chip-btn" type="button" @click="exportMd">Exporter</button>
+          <!-- Suppression : réservée aux sessions connectées (401 sinon côté serveur).
+               Pour une liste sans propriétaire, tout utilisateur connecté peut la
+               supprimer — assumé côté serveur : l'URL reste la capacité d'accès,
+               la connexion sert uniquement à tracer la suppression. -->
+          <button
+            v-if="user && list"
+            class="chip-btn delete-list-btn"
+            type="button"
+            @click="deleteList"
+          >
+            Supprimer
+          </button>
         </div>
 
         <details class="pseudo">
@@ -68,9 +80,10 @@
               class="input"
               type="text"
               placeholder="Ton pseudo"
+              maxlength="40"
               required
             />
-            <button class="btn" type="submit">OK</button>
+            <button class="btn" type="submit" :disabled="savingPseudo">OK</button>
           </form>
         </details>
       </header>
@@ -82,7 +95,46 @@
         <div class="sections">
           <article v-for="(section, si) in list.sections" :key="si" class="etal">
             <div class="band" :style="{ backgroundColor: tones[si % tones.length] }">
-              {{ section.name || 'Sans rayon' }}
+              <!-- Renommage du rayon : même pattern que le titre (crayon + édition
+                   inline). Masqué sur le rayon par défaut (name === ''), le serveur
+                   n'y retouchant pas via renameSection. -->
+              <span v-if="editingSectionIndex !== si">{{ section.name || 'Sans rayon' }}</span>
+              <button
+                v-if="editingSectionIndex !== si && section.name !== ''"
+                class="band-rename-btn"
+                type="button"
+                aria-label="Renommer le rayon"
+                title="Renommer"
+                @click="startRenameSection(si)"
+              >
+                ✎
+              </button>
+              <form v-if="editingSectionIndex === si" class="section-edit" @submit.prevent="submitRenameSection">
+                <label class="sr-only" :for="'rename-section-' + si">Nouveau nom du rayon</label>
+                <input
+                  :id="'rename-section-' + si"
+                  :ref="setSectionEditInput"
+                  v-model="sectionInput"
+                  class="input section-input"
+                  type="text"
+                  maxlength="100"
+                  :disabled="renamingSection"
+                  @blur="onSectionBlur"
+                  @keydown.esc.prevent="cancelRenameSection"
+                />
+                <button class="btn" type="submit" :disabled="renamingSection" @mousedown.prevent>
+                  {{ renamingSection ? 'Enregistrement…' : 'Enregistrer' }}
+                </button>
+                <button
+                  class="chip-btn"
+                  type="button"
+                  :disabled="renamingSection"
+                  @mousedown.prevent
+                  @click="cancelRenameSection"
+                >
+                  Annuler
+                </button>
+              </form>
             </div>
 
             <div
@@ -178,6 +230,7 @@
             class="input"
             type="text"
             placeholder="Ex : Alex"
+            maxlength="40"
             required
             autofocus
           />
@@ -272,6 +325,11 @@ import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 
 const route = useRoute()
 const id = computed(() => route.params.id)
+const router = useRouter()
+
+// Session (comptes optionnels) : `user.pseudo` est la source de vérité quand
+// on est connecté, localStorage sinon (comportement v1 pour l'anonyme).
+const { user } = useAuth()
 
 const list = ref(null)
 const error = ref('')
@@ -297,6 +355,7 @@ const namedSections = computed(() =>
 // Pseudo
 const pseudo = ref('')
 const pseudoInput = ref('')
+const savingPseudo = ref(false)
 
 // New item form
 const newItemSection = ref('')
@@ -344,7 +403,8 @@ function closeAddDialog() {
 }
 
 onMounted(() => {
-  pseudo.value = localStorage.getItem('listify-pseudo') || ''
+  // Pseudo : priorité au compte connecté, repli localStorage pour l'anonyme (v1)
+  pseudo.value = user.value ? user.value.pseudo || '' : localStorage.getItem('listify-pseudo') || ''
   pseudoInput.value = pseudo.value
   fetchList()
 })
@@ -353,11 +413,25 @@ onUnmounted(() => {
   addSectionObserver?.disconnect()
 })
 
-// Show pseudo modal if not set yet, after list is loaded
+// Show pseudo modal if not set yet, after list is loaded.
+// Choix retenu (le moins intrusif) : le dialog de première visite ne s'ouvre
+// QUE pour un visiteur anonyme. Un utilisateur connecté sans pseudo le
+// définira via le details « Mon pseudo », qui enregistre côté compte — on
+// n'interrompt pas sa navigation avec une modale pour un champ déjà éditable
+// dans la page.
 watch(list, (val) => {
-  if (val && !pseudo.value) {
+  if (val && !pseudo.value && !user.value) {
     pseudoDialog.value?.showModal()
   }
+})
+
+// Login / logout : recalcul du pseudo.
+// Connecté → pseudo du compte ; déconnecté → repli localStorage (jamais
+// écrit pendant la session connectée, donc pas de résurrection d'un pseudo
+// de compte dans l'anonyme).
+watch(user, (u) => {
+  pseudo.value = u ? u.pseudo || '' : localStorage.getItem('listify-pseudo') || ''
+  pseudoInput.value = pseudo.value
 })
 
 watch(() => route.params.id, fetchList)
@@ -432,6 +506,58 @@ async function submitRename() {
   titleInput.value = ''
 }
 
+// Renommage de rayon : même pattern que le titre (crayon + édition inline).
+// Les rayons sont adressés par `sectionIndex` : le serveur ne change que
+// `section.name`, l'ordre et les index restent stables après un renommage.
+// Vide ou inchangé après trim → pas de requête ; blur n'enregistre que si changé.
+const editingSectionIndex = ref(-1)
+const renamingSection = ref(false)
+const sectionInput = ref('')
+const sectionEditInput = ref(null)
+
+// Ref fonction : un string ref dans un v-for serait collecté en tableau —
+// une seule édition ouverte à la fois, on garde un simple ref unique.
+function setSectionEditInput(el) {
+  sectionEditInput.value = el
+}
+
+function startRenameSection(si) {
+  sectionInput.value = list.value?.sections[si]?.name || ''
+  editingSectionIndex.value = si
+  nextTick(() => sectionEditInput.value?.focus())
+}
+
+function cancelRenameSection() {
+  if (renamingSection.value) return
+  editingSectionIndex.value = -1
+  sectionInput.value = ''
+}
+
+function onSectionBlur() {
+  if (editingSectionIndex.value < 0 || renamingSection.value) return
+  submitRenameSection()
+}
+
+async function submitRenameSection() {
+  const si = editingSectionIndex.value
+  if (si < 0 || renamingSection.value) return
+  const next = sectionInput.value.trim()
+  const current = (list.value?.sections[si]?.name || '').trim()
+  if (!next || next === current) {
+    editingSectionIndex.value = -1
+    sectionInput.value = ''
+    return
+  }
+  renamingSection.value = true
+  error.value = ''
+  await patchList({ action: 'renameSection', sectionIndex: si, value: next })
+  // patchList n'écrit dans `error` que si le PATCH a échoué → on précise le contexte
+  if (error.value) error.value = 'Erreur lors du renommage du rayon'
+  renamingSection.value = false
+  editingSectionIndex.value = -1
+  sectionInput.value = ''
+}
+
 // Rayon « Nouvelle catégorie… » : sentinelle du select → saisie libre du nom.
 // Les deux formulaires (inline + popup) partagent newItemSection (le select) et
 // newSectionName (le champ texte) : l'état « nouvelle catégorie » est commun.
@@ -465,12 +591,13 @@ async function toggleAssign(si, ii) {
   await patchList({ action: 'assign', sectionIndex: si, itemIndex: ii, value: pseudo.value })
 }
 
-function confirmPseudo() {
+async function confirmPseudo() {
   const p = pseudoInput.value.trim()
-  if (!p) return
-  pseudo.value = p
-  localStorage.setItem('listify-pseudo', p)
-  pseudoDialog.value?.close()
+  if (!p || savingPseudo.value) return
+  // Le dialog suit la session : connecté → côté compte, anonyme → localStorage
+  const ok = await savePseudo(p)
+  pseudoInput.value = pseudo.value
+  if (ok) pseudoDialog.value?.close()
 }
 
 async function deleteItem(si, ii) {
@@ -512,15 +639,66 @@ async function submitAddDialog() {
   nextTick(() => addFab.value?.focus())
 }
 
-function setPseudo() {
-  pseudo.value = pseudoInput.value.trim()
-  localStorage.setItem('listify-pseudo', pseudo.value)
+// Enregistrement du pseudo, partagé par le details « Mon pseudo » (setPseudo)
+// et le dialog de première visite (confirmPseudo).
+// Connecté → POST /api/auth/pseudo (route réelle : server/api/auth/pseudo.post.js,
+// method POST ; le pseudo est alors partagé entre appareils via user.value.pseudo,
+// et localStorage n'est PAS touché — à la déconnexion on retombe sur l'anonyme).
+// Anonyme → localStorage, comportement v1 inchangé.
+async function savePseudo(p) {
+  if (user.value) {
+    savingPseudo.value = true
+    try {
+      const res = await $fetch('/api/auth/pseudo', { method: 'POST', body: { pseudo: p } })
+      user.value = res.user
+      // Le serveur trim/slice(40) : on reprend sa valeur, source de vérité
+      pseudo.value = user.value.pseudo || ''
+      error.value = ''
+      return true
+    } catch {
+      error.value = 'Impossible d’enregistrer le pseudo'
+      return false
+    } finally {
+      savingPseudo.value = false
+    }
+  }
+  pseudo.value = p
+  localStorage.setItem('listify-pseudo', p)
+  return true
+}
+
+async function setPseudo() {
+  const p = pseudoInput.value.trim()
+  if (!p || savingPseudo.value) return
+  await savePseudo(p)
+  pseudoInput.value = pseudo.value
 }
 
 function copyLink() {
   navigator.clipboard.writeText(window.location.href)
     .then(() => alert('Lien copié !'))
     .catch(() => alert('Impossible de copier'))
+}
+
+// Suppression de liste : visible seulement connecté (bouton v-if="user && list").
+// DELETE /api/lists/:id → 401 si anonyme, 403 si la liste appartient à un autre
+// compte ; une liste anonyme (sans propriétaire) est supprimable par tout
+// utilisateur connecté — assumé côté serveur : l'URL reste la capacité d'accès,
+// la connexion sert à tracer qui supprime.
+async function deleteList() {
+  if (!confirm('Supprimer définitivement cette liste ?')) return
+  try {
+    await $fetch(`/api/lists/${id.value}`, { method: 'DELETE' })
+    await router.push('/')
+  } catch (e) {
+    if (e.response?.status === 403) {
+      error.value = 'Cette liste ne t’appartient pas.'
+    } else if (e.response?.status === 401) {
+      error.value = 'Connecte-toi pour supprimer cette liste.'
+    } else {
+      error.value = 'Erreur lors de la suppression'
+    }
+  }
 }
 
 function exportMd() {
@@ -738,5 +916,73 @@ function exportMd() {
   margin-top: 0.4rem;
   margin-left: 0.85rem;
   width: calc(100% - 0.85rem);
+}
+
+/* ==========================================================================
+   Renommage de rayon — crayon discret sur le band + édition inline
+   ========================================================================== */
+.band-rename-btn {
+  margin-left: auto; /* collé à droite du band, après le nom */
+  flex: none;
+  padding: 0.3rem 0.55rem;
+  min-width: 2.2rem;
+  min-height: 2.2rem; /* zone de tactile ≥ 35px */
+  line-height: 1;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--papier);
+  background: transparent;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.band-rename-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.14);
+}
+.band-rename-btn:focus-visible {
+  outline: 3px solid var(--papier);
+  outline-offset: 2px;
+}
+
+/* Édition inline du nom : même gabarit que l'édition du titre, adapté au band
+   (input blanc sur le ton du rayon, police display, capitales) */
+.section-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.section-input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  width: auto;
+  padding: 0.25rem 0.5rem;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--encre);
+}
+.section-edit .btn,
+.section-edit .chip-btn {
+  flex: none;
+}
+
+/* ==========================================================================
+   Suppression de liste — chip destructif (ton tomate, hover plein)
+   ========================================================================== */
+.delete-list-btn {
+  color: var(--tomate);
+  border-color: var(--tomate);
+}
+.delete-list-btn:hover {
+  background: var(--tomate);
+  color: var(--papier);
 }
 </style>
