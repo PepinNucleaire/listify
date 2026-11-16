@@ -33,6 +33,7 @@ Body: `{ action, sectionIndex, itemIndex, value }` for item actions; `{ action: 
 | `text` | `item.text = value` |
 | `add` | Finds section by `sectionName`, appending `{ name: sectionName, items: [] }` if absent; pushes `{ text, checked: false, qty: qty || '', assign: '' }` |
 | `delete` | `splice(itemIndex, 1)` in the addressed section, then drops every section whose `items` became empty |
+| `rename` | `list.title = String(value).trim().slice(0, 200)`; empty/whitespace value is a silent no-op (v2.1) |
 
 An unrecognized or missing `action` falls through the if/else chain: nothing mutates, but the list is still rewritten and returned unchanged (no 400).
 
