@@ -39,6 +39,10 @@ export default defineEventHandler(async (event) => {
     } else if (action === 'rename') {
       const t = String(value ?? '').trim()
       if (t) list.title = t.slice(0, 200)
+    } else if (action === 'renameSection') {
+      const section = list.sections[sectionIndex]
+      const name = String(value ?? '').trim()
+      if (section && name) section.name = name.slice(0, 100)
     } else if (action === 'delete') {
       list.sections[sectionIndex]?.items.splice(itemIndex, 1)
       list.sections = list.sections.filter(s => s.items.length > 0)

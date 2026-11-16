@@ -1,4 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { getCookie, setCookie, deleteCookie, getRequestIP, createError } from 'h3'
 import { getDb } from './db.js'
 
 /**
@@ -85,7 +86,7 @@ export function getSessionUser(event) {
 
   const row = getDb()
     .prepare(`
-      SELECT users.id, users.email, sessions.expires_at
+      SELECT users.id, users.email, users.pseudo, sessions.expires_at
       FROM sessions
       JOIN users ON users.id = sessions.user_id
       WHERE sessions.token = ?
@@ -99,7 +100,7 @@ export function getSessionUser(event) {
     return null
   }
 
-  return { id: row.id, email: row.email }
+  return { id: row.id, email: row.email, pseudo: row.pseudo || '' }
 }
 
 export function destroySession(event) {

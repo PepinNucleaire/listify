@@ -1,6 +1,10 @@
 /**
  * État de session partagé (comptes optionnels v2).
  * `user` vaut null pour un visiteur anonyme — comportement v1 inchangé.
+ *
+ * La session est résolue côté serveur au premier rendu (plugin
+ * `plugins/auth.server.js` → `useState` hydraté), donc un utilisateur connecté
+ * ne voit plus la barre anonyme clignoter au chargement complet de la page.
  */
 export function useAuth() {
   const user = useState('listify-user', () => null)
